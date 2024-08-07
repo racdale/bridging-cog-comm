@@ -1,0 +1,424 @@
+---
+title: "Bridging Cognition and Communication: Identifying Opportunities for Cross-Disciplinary
+  Connections Using Scientometric Techniques"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 1
+    toc_float: true
+---
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#
+# code for Dale et al., under submission
+# first code drafted by corresponding author Rick Dale
+# AI disclosure: LLMs assisted with some debugging of 
+#     APA-formatted table, dplyr munging, & ggplot2 formatting
+#
+
+library(gt)
+library(jsonlite)
+library(tm)
+library(Rtsne)
+library(dplyr)
+library(ggplot2)
+library(entropy)
+library(stringr)
+library(ggtext)
+library(tidytext)
+library(tidyr)
+library(lubridate)
+library(lda)
+library(scico)
+
+source('functions.R')
+
+knitr::opts_chunk$set(dpi=300,fig.width=7,fig.height=7)
+
+```
+
+# Load, Clean, Check
+
+Let's load in the CSV files from Web of Science, clean them up and define some new variables from the text.
+
+```{r}
+
+knitr::opts_knit$set(root.dir = normalizePath(getwd()))
+
+fls = c(paste0('data/comm/',list.files('data/comm/')),paste0('data/cogsci/',list.files('data/cogsci/')))
+s = c()
+for (fl in fls) {
+  s = rbind(s, read.csv(fl,sep='\t',header=T,quote=""))
+}
+s = s[nchar(s$AB)>10 & nchar(s$TI)>3,]
+
+s$AB = sapply(s$AB,function(x){
+  return(paste(unlist(tidytext::unnest_tokens(data.frame(text=x),word,text)),
+               collapse=' '))
+})
+
+# clean some annotation
+s$AB = gsub(' c \\d\\d\\d\\d elsevier inc all rights reserved','',s$AB)
+s$AB = gsub('c \\d\\d\\d\\d the authors published by elsevier inc','',s$AB)
+s$AB = gsub('published by elsevier inc','',s$AB)
+s$AB = gsub('c \\d\\d\\d\\d elsevier science usa','',s$AB)
+# checked others like this; seems clear! s[s$SO == unique(s$SO)[10],]$AB[1:3]
+
+s$AB = trimws(s$AB)
+# number of authors
+s$nAU = nchar(s$AU) - nchar(gsub(';','',s$AU)) + 1 # add one, for delimiter
+# number of words in abstract & title
+s$nWT = nchar(s$TI) - nchar(gsub(' ','',s$TI)) + 1 
+s$nWA = nchar(s$AB) - nchar(gsub(' ','',s$AB)) + 1 
+s$comm = (s$WC == "Communication")
+
+# narrow fields
+s = select(s, AU, TI, SO, AB, WC, nAU, comm, nWT, nWA, PY, DL)
+s$DL[is.na(s$DL)] = ''
+s = unique(s)
+s = aggregate(AB~AU+TI+SO+WC+nAU+comm+nWT+nWA+PY+DL, data = s, FUN = function(AB) AB[1])
+dim(s)
+
+# let's take a quick look:
+s$AU[1:10]
+s$AB[4:5]
+str(s)
+
+```
+
+There are some repeat abstracts - repeat records, newer articles, likely resulting from timing of publication and recency of the WoS records. Let's clear these based on searches for matches.
+
+```{r}
+
+# 4 title repeats remaining
+final_repeats_T = names(sort(table(s$TI),decreasing=T)[1:4])
+# for each, grab the most recent
+tmp = c()
+for (i in 1:length(final_repeats_T)) {
+  tmp = rbind(tmp,s[s$TI == final_repeats_T[i],][2,])
+}
+
+# 3 abstract repeats remaining
+final_repeats_A = names(sort(table(s$AB),decreasing=T)[1:3])
+# for each, grab the most recent
+for (i in 1:length(final_repeats_A)) {
+  tmp = rbind(tmp,s[s$AB == final_repeats_A[i],][2,])
+}
+
+tmp = unique(tmp)
+
+s = s[!(s$TI %in% final_repeats_T) & !(s$AB %in% final_repeats_A),] # first, remove 'em
+s = rbind(s,tmp)
+dim(s)
+table(s$SO,s$comm) # check
+
+```
+
+# Descriptives, Table
+
+Let's assemble the full set of descriptives for selected journals. 
+
+```{r}
+
+# table 1 with journal descriptives/stats
+summary = s %>%
+  group_by(SO) %>%
+  summarize(
+    `Discipline` = sum(comm)>0,
+    n = sum(nAU>0, na.rm=T),
+    `Min. year` = min(as.numeric(PY), na.rm=T),
+    `Max. year` = max(as.numeric(PY), na.rm=T),
+    `Mean num. authors` = mean(nAU, na.rm=T),
+    `Mean num. words in title` = mean(nWT, na.rm=T),
+    `Mean num. words in abstract` = mean(nWA, na.rm=T),
+    .groups = "drop"
+  )
+summary = summary[order(summary$Discipline,decreasing=T),]
+summary$Discipline = c('CogSci','Comm.')[1*summary$Discipline+1]
+summary
+
+apa_table = summary %>%
+  gt() %>%
+  tab_header(
+    title = "Table 1: Journals and articles included in sample",
+  ) %>%
+  fmt_number(
+    columns = c(`Mean num. authors`,`Mean num. words in title`,`Mean num. words in abstract`),
+    decimals = 2
+  ) %>%
+  tab_style(
+    style = list(
+      cell_borders(sides = "top", weight = px(2)),
+      cell_borders(sides = "bottom", weight = px(2))
+    ),
+    locations = cells_column_labels(columns = everything())
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "bottom", weight = px(2)),
+    locations = cells_stub()
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "bottom", weight = px(2)),
+    locations = cells_stub()
+  )
+
+apa_table
+
+# double check computes above directly
+sum(s$SO=='COMMUNICATION MONOGRAPHS')
+sum(s$PY[s$SO=='COMMUNICATION MONOGRAPHS'])
+mean(s$nAU[s$SO=='COMMUNICATION MONOGRAPHS'])
+mean(s$nWT[s$SO=='COGNITIVE SCIENCE'])
+
+```
+
+# Analysis 1: Simple Descriptives
+
+Let's compute some simple comparisons across disciplines such as number of authors, content detail in titles and abstracts and so on. This is the first batch of reported inferential analyses in the paper.
+
+```{r}
+
+### number of authors ###
+
+aggregate(nAU~comm,data=s,mean)
+summary(lm(nAU~comm,data=s))
+summary(lm(log(nAU)~comm,data=s))
+summary(lm(log(nAU)~comm,data=s[s$PY>2000,]))
+
+aggregate(nAU~comm,data=s[s$SO!='COMMUNICATION THEORY',],mean)
+summary(lm(nAU~comm,data=s[s$SO!='COMMUNICATION THEORY',]))
+
+summary(lm(nAU~SO,data=s))
+summary(lm(log(nAU)~SO,data=s))
+
+### title ###
+
+aggregate(nWT~comm,data=s,mean)
+summary(lm(nWT~comm,data=s))
+
+colon = as.numeric(sapply(s$TI, function(x) grepl(':', x, fixed = TRUE)))
+aggregate(colon~comm,data=s,mean)
+summary(glm(colon~comm,data=s,family='binomial'))
+s[colon==1,][1:10,]$TI # check
+s[colon==0,][1:10,]$TI 
+
+# hm, colons show up later in time...?
+summary(glm(colon[s$comm]~PY,data=s[s$comm,],family='binomial'))
+
+aggregate(nWT~comm,data=s[colon==0,],mean)
+summary(lm(nWT~comm,data=s[colon==0,]))
+
+summary(lm(nWT~SO,data=s)) # by journal identity
+
+# for fun
+cbind(s[order(nchar(s$TI),decreasing=F)[1:10],]$TI,
+      s[order(nchar(s$TI),decreasing=F)[1:10],]$SO)
+
+### abstract ###
+
+aggregate(nWA~comm,data=s,mean)
+summary(lm(nWA~comm,data=s))
+summary(lm(nWA~SO,data=s)) # by journal identity
+
+### correlation between then ###
+
+cor.test(s$nWA,s$nWT)
+
+```
+
+# Analysis 2: Topic Space
+
+Let's build the topic space and use t-SNE to position the articles by reducing the topic distributions into a two-dimensional solution that can then be analyzed using k-means. See earlier in the Appendix writeup for a justification for this multi-step reduction from the thousands of abstracts.
+
+```{r}
+
+# dichomratic friendly scientific colors
+cluster_colors = scico(n=20,palette='hawaii',alpha=.75)
+
+all_lda = get_distance_matrix(paste(s$TI,s$AB), remove_keywords = T, K=20, seed=2015)
+probs = all_lda$probs
+lda_model = all_lda$lda_model
+
+set.seed(2015)
+tsnemod = Rtsne(probs + (.001*runif(prod(dim(probs)))-.0005)) # ~.1% impulse to avoid repeated topic vectors
+
+clusters_2 = kmeans(probs, centers = 2, nstart = 20, iter.max=50)
+clusters_20 = kmeans(probs, centers = 20, nstart = 20, iter.max=50)
+
+cluster_data = as.data.frame(probs)
+cluster_data$cluster_2 = as.factor(clusters_2$cluster)
+cluster_data$cluster_20 = as.factor(clusters_20$cluster)
+
+cluster_data$x = tsnemod$Y[,1]
+cluster_data$y = tsnemod$Y[,2]
+
+dim(cluster_data) # check alignment
+dim(s)
+
+cluster_data$comm = s$comm
+cluster_data$SO = s$SO
+
+```
+
+Let's take a look at this space by discipline, then do some stats on whether the multi-step approach separates communication and cognitive science articles.
+
+```{r}
+
+color_mapping = setNames(c('#ff000088','#0000ff88'), as.character(c(FALSE,TRUE)))
+ggplot(cluster_data, aes(x = x, y = y, color = comm)) +
+  geom_point(alpha = 0.6, size = s$nAU/2) +
+  theme_minimal() +
+  scale_color_manual(values = color_mapping) +
+  labs(title = "", x = "t-SNE x", y = "t-SNE y") +
+  scale_shape_discrete(name = "Communication Journal")
+
+summary(lm(x~comm,data=cluster_data))
+summary(lm(y~comm,data=cluster_data))
+
+summary(lm(x~SO,data=cluster_data))
+summary(lm(y~SO,data=cluster_data))
+
+table(cluster_data$SO,cluster_data$comm) # triple check check alignment
+
+```
+
+Now let's assess if the k-means clusters are distributed more broadly across the putatively multidisciplinary under consideration (cognitive science) compared to the one that may be a more coherence federation of allied interests (communication).
+
+```{r}
+
+comm_topic_dist = table(cluster_data$cluster_20[cluster_data$comm])
+cogs_topic_dist = table(cluster_data$cluster_20[!cluster_data$comm])
+
+entropy(comm_topic_dist)
+entropy(cogs_topic_dist)
+
+topic_distribution = t(rbind(comm_topic_dist, cogs_topic_dist)) # check alignment
+
+# not included in paper: shows that topics also tend to cluster
+barplot(cbind(comm_topic_dist, cogs_topic_dist) ~ rownames(topic_distribution), data = topic_distribution,
+        beside = TRUE, col = c("blue", "red"),xlab='Cluster',ylab='Count', bty = 'n',
+        legend.text = c("Comm.", "CogSci"),args.legend = list(x = "topright"))
+
+### simulation to test for difference ###
+
+comm_entropy = c(); cogs_entropy = c()
+comm_clusters = cluster_data$cluster_20[cluster_data$comm]
+cogs_clusters = cluster_data$cluster_20[!cluster_data$comm]
+
+set.seed(1953)
+
+for (i in 1:10000) {
+  comm_entropy = c(comm_entropy,entropy(table(sample(comm_clusters,100))))
+  cogs_entropy = c(cogs_entropy,entropy(table(sample(cogs_clusters,100))))
+}
+
+t.test(comm_entropy,cogs_entropy) # cogs is more varied; higher entropy
+
+```
+
+Let's look at clustering by journal and their pairwise correlations by how they distribute over topics.
+
+```{r}
+
+# desired order of journals; ensure cogs/comm together
+desired_order = unique(s$SO[order(s$comm,decreasing=T)]) 
+
+# let's get the distribution by k-means cluster & source
+journal_by_topic = table(cluster_data$cluster_20,cluster_data$SO) 
+journal_dists = as.matrix(dist(t(journal_by_topic),upper=T,diag=T))
+des_rows = unlist(lapply(desired_order,function(x){return(which(rownames(journal_dists)==x))}))
+des_cols = unlist(lapply(desired_order,function(x){return(which(colnames(journal_dists)==x))}))
+journal_dists = journal_dists[des_rows,]
+journal_dists = journal_dists[,des_cols]
+
+# let's plot, set margins to fit
+heatmap(journal_dists,margins=c(16,13),cexRow=.75,cexCol=.75)
+
+```
+
+Let's plot by k-means cluster, also for guidance in qualitative assessment and in the interactive interface.
+
+```{r}
+
+cluster_colors = scico(n=20,palette='hawaii',alpha=.75)
+color_mapping = setNames(cluster_colors, as.character(1:20))
+ggplot(cluster_data, aes(x = x, y = y, color = cluster_20)) +
+  geom_point(alpha = 0.6, size = s$nAU/2) +
+  theme_minimal() +
+  scale_color_manual(values = color_mapping) +
+  labs(title = "", x = "t-SNE x", y = "t-SNE y") +
+  scale_shape_discrete(name = "Communication Journal")
+
+```
+
+Not included in the paper but we should also plot by journal. This is mentioned in the Appendix for the interested reader.
+
+```{r}
+
+ggplot(cluster_data, aes(x = x, y = y, color = s$SO)) +
+  geom_point(alpha = 0.6, size = s$nAU/2) +
+  theme_minimal() +
+  labs(title = "", x = "t-SNE x", y = "t-SNE y") +
+  scale_shape_discrete(name = "Communication Journal")
+
+```
+
+# Analysis 3: Qualitative
+
+Finally, let's create the interactive interface. A perhaps clunky approach with absolute top/bottom setting in CSS, but makes for very easy output using vectors in data frame and so on. JavaScript is specified in ui.js in GitHub repo.
+
+```{r}
+
+# let's get the k-means cluster information to display alongside papers used in mouseover
+wordsdata = list()
+
+for (i in 1:20) {
+  # first, let's extract the top LDA topics for this cluster
+  tmp = probs[cluster_data$cluster_20==i,]
+  which_topics = order(colSums(tmp),decreasing=T)[1:10]
+  word_scores = colSums(lda_model$topics[which_topics,])
+  
+  # get the top words
+  score_cutoff = sort(word_scores,decreasing=T)[51]
+  words = word_scores[word_scores>=score_cutoff]
+  words = round(words/max(words),2)
+  
+  # let's save in list, to be exported as JSON for interface
+  wordsdata[[i]] = data.frame(word=names(words),score=words)
+  wordsdata[[i]] = wordsdata[[i]][order(wordsdata[[i]]$score,decreasing=T),]
+}
+
+```
+
+Let's now export the interface as `index.html' for use on lab website and for reader to consult at https://co-mind.org/cogcomm
+\tiny
+
+```{r}
+
+# set manually then set to percentage for responsive effect
+x = round(cluster_data$x*10+500,3)
+y = round(-cluster_data$y*10+500,3)
+x = round(80 * x / max(x),2) + 10
+y = round(80 * y / max(y),2) + 10
+
+# get the colors by the cluster ordering
+cols = cluster_colors[cluster_data$cluster_20]
+
+write(file='index.html',paste('<html><head></head><body><script>clusters=',toJSON(wordsdata),
+                                               '</script><div id="scatter"><div class="container" style="width:100vw;height:100vh;">',
+                                               paste('<div class="divdot com',s$comm,'" onclick=\"visitUrl(\'',
+                                                     s$DL,'\');\" onmouseover=\"showLink(\'',gsub('"',"",gsub("'","",s$TI)),' - ',
+                                                     gsub("'","`",s$AU),' - ',s$SO,
+                                                     '\',\'',s$DL,'\',\'',cluster_data$cluster_20,'\');\" ',
+                                                     #'\');\" titleabstract=\"', paste0(s$TI,' ',s$AB),'\"',
+                                                     'style="font-size:',5*sqrt(s$nAU)+.1,
+                                                     'pt;top:',y,'%;left:',x,'%;position:absolute;color:',cols,
+                                                     ';cursor:pointer;" defaultcolor="',cols,'">',
+                                                     c('&#9679;','&#9632;')[1*s$comm+1],'</div>',sep='',collapse=''),
+                                               '</div></div><script>',readChar('ui.js',nchar=file.info('ui.js')$size),
+                                               '</script></body></html>',collapse=''))
+
+
+```
