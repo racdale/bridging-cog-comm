@@ -241,7 +241,7 @@ all_lda = get_distance_matrix(paste(s$TI,s$AB), remove_keywords = T, K=20, seed=
 probs = all_lda$probs
 lda_model = all_lda$lda_model
 
-set.seed(2015)
+set.seed(1977)
 tsnemod = Rtsne(probs + (.001*runif(prod(dim(probs)))-.0005)) # ~.1% impulse to avoid repeated topic vectors
 
 clusters_2 = kmeans(probs, centers = 2, nstart = 20, iter.max=50)
@@ -266,10 +266,12 @@ Let's take a look at this space by discipline, then do some stats on whether the
 
 ```{r}
 
-color_mapping = setNames(c('#ff000088','#0000ff88'), as.character(c(FALSE,TRUE)))
+# blue = comm
+color_mapping = setNames(c('#ff000088','#0000ff88'), as.character(c(FALSE,TRUE))) 
 ggplot(cluster_data, aes(x = x, y = y, color = comm)) +
   geom_point(alpha = 0.6, size = s$nAU/2) +
   theme_minimal() +
+  theme(legend.position = 'none') +    
   scale_color_manual(values = color_mapping) +
   labs(title = "", x = "t-SNE x", y = "t-SNE y") +
   scale_shape_discrete(name = "Communication Journal")
@@ -347,6 +349,7 @@ color_mapping = setNames(cluster_colors, as.character(1:20))
 ggplot(cluster_data, aes(x = x, y = y, color = cluster_20)) +
   geom_point(alpha = 0.6, size = s$nAU/2) +
   theme_minimal() +
+  theme(legend.position = 'none') +  
   scale_color_manual(values = color_mapping) +
   labs(title = "", x = "t-SNE x", y = "t-SNE y") +
   scale_shape_discrete(name = "Communication Journal")
@@ -374,12 +377,13 @@ Finally, let's create the interactive interface. A perhaps clunky approach with 
 # let's get the k-means cluster information to display alongside papers used in mouseover
 wordsdata = list()
 
+# now let's use these to filter to the more unique summaries...
 for (i in 1:20) {
   # first, let's extract the top LDA topics for this cluster
   tmp = probs[cluster_data$cluster_20==i,]
-  which_topics = order(colSums(tmp),decreasing=T)[1:10]
-  word_scores = colSums(lda_model$topics[which_topics,])
-  
+  # which_topics = order(colSums(tmp),decreasing=T)[1:10]
+  word_scores = colSums(tmp %*% lda_model$topics)#[which_topics,])
+
   # get the top words
   score_cutoff = sort(word_scores,decreasing=T)[51]
   words = word_scores[word_scores>=score_cutoff]
@@ -393,7 +397,6 @@ for (i in 1:20) {
 ```
 
 Let's now export the interface as `index.html' for use on lab website and for reader to consult at https://co-mind.org/cogcomm
-\tiny
 
 ```{r}
 
@@ -401,24 +404,27 @@ Let's now export the interface as `index.html' for use on lab website and for re
 x = round(cluster_data$x*10+500,3)
 y = round(-cluster_data$y*10+500,3)
 x = round(80 * x / max(x),2) + 10
-y = round(80 * y / max(y),2) + 10
+y = round(70 * y / max(y),2) + 20
 
 # get the colors by the cluster ordering
 cols = cluster_colors[cluster_data$cluster_20]
 
-write(file='index.html',paste('<html><head></head><body><script>clusters=',toJSON(wordsdata),
-                                               '</script><div id="scatter"><div class="container" style="width:100vw;height:100vh;">',
-                                               paste('<div class="divdot com',s$comm,'" onclick=\"visitUrl(\'',
-                                                     s$DL,'\');\" onmouseover=\"showLink(\'',gsub('"',"",gsub("'","",s$TI)),' - ',
-                                                     gsub("'","`",s$AU),' - ',s$SO,
-                                                     '\',\'',s$DL,'\',\'',cluster_data$cluster_20,'\');\" ',
-                                                     #'\');\" titleabstract=\"', paste0(s$TI,' ',s$AB),'\"',
-                                                     'style="font-size:',5*sqrt(s$nAU)+.1,
-                                                     'pt;top:',y,'%;left:',x,'%;position:absolute;color:',cols,
-                                                     ';cursor:pointer;" defaultcolor="',cols,'">',
-                                                     c('&#9679;','&#9632;')[1*s$comm+1],'</div>',sep='',collapse=''),
-                                               '</div></div><script>',readChar('ui.js',nchar=file.info('ui.js')$size),
-                                               '</script></body></html>',collapse=''))
-
+write(file='index.html',paste(
+  '<html><head></head><body><script>clusters=',toJSON(wordsdata),
+  ';txt=',toJSON(data.frame(ab=s$AB,ti=s$TI)),
+  ';</script><div id="scatter"><div id="container" style="width:100vw;height:100vh;">',
+  paste('<div class="divdot com',s$comm,'" onclick=\"visitUrl(\'',
+  s$DL,'\');\" onmouseover=\"showLink(\'',gsub('"',"",gsub("'","",s$TI)),' - ',
+  gsub("'","`",s$AU),' - ',s$SO,
+  '\',\'',s$DL,'\',\'',cluster_data$cluster_20,'\');\" ',
+  #'\');\" titleabstract=\"', paste0(s$TI,' ',s$AB),'\"',
+  'style="font-size:',5*sqrt(s$nAU)+.1,
+  'pt;top:',y,'%;left:',x,'%;position:absolute;color:',cols,
+  ';cursor:pointer;" defaultcolor="',cols,'">',
+  c('&#9679;','&#9632;')[1*s$comm+1],'</div>',sep='',collapse=''),
+  '</div></div><script>',readChar('ui.js',nchar=file.info('ui.js')$size),
+  '</script></body></html>',collapse=''
+  )
+)
 
 ```

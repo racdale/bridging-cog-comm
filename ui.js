@@ -15,7 +15,9 @@ function showLink(info, url, cluster_id) {
     modal.style.zIndex = '1';
     modal.style.left = '0';
     modal.style.top = '0';
-    modal.style.width = '50%';
+    modal.style.height = '17%';
+    modal.style.width = '100%';
+    modal.style.overflowY = 'scroll';
     modal.style.color = 'white';
     modal.style.fontSize = '11pt';
     modal.style.padding = '10px';
@@ -62,14 +64,15 @@ button.id = 'search_button';
 document.body.appendChild(button);
 
 var highlight_color = "yellow";
-document.getElementById('search_button').addEventListener('click', function() {
+document.getElementById('search_button').addEventListener('click', function() {    
     var search = document.getElementById('search').value;
     var divs = document.getElementsByClassName('divdot');
     search_values = search.split('|');
-    for (var i = 0; i < divs.length; i++) {
+    for (var i = 0; i < divs.length; i++) {        
+        var haystack = txt[i].ti + ' ' + txt[i].ab;            
         found = false;
-        for (var j = 0; j < search_values.length; j++) {
-            if (divs[i].getAttribute('onmouseover').toLowerCase().indexOf(search_values[j]) > -1) {
+        for (var j = 0; j < search_values.length; j++) {            
+            if (haystack.toLowerCase().indexOf(search_values[j]) > -1) {                
                 found = true;
                 break;
             }
@@ -95,7 +98,7 @@ function draw_button(innerhtml,id,bottompx) {
     document.body.appendChild(button);    
 }
 
-draw_button('Journal','journal_button','20px');
+draw_button('Discipline','journal_button','20px');
 document.getElementById('journal_button').addEventListener('click', function() {
     highlight_color = "yellow";
     var divs = document.getElementsByClassName('comTRUE');
@@ -137,3 +140,10 @@ document.getElementById('gray_button').addEventListener('click', function() {
 function visitUrl(url) {
     window.open(url, '_blank');
 }   
+
+document.getElementById('container').onclick = function(event) {
+    var divs = document.getElementsByClassName('divdot');
+    for (var i = 0; i < divs.length; i++) {
+        divs[i].style.backgroundColor = '#ffffff00';
+    }
+}
