@@ -5,15 +5,15 @@ output:
   html_document:
     df_print: paged
     toc: true
-    toc_depth: 1
+    toc_depth: 2
     toc_float: true
 ---
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 
 #
-# code for Dale et al., under submission
-# first code drafted by corresponding author Rick Dale
+# code for ANONYMIZED
+# first code drafted by corresponding author ANONYMIZED
 # AI disclosure: LLMs assisted with some debugging of 
 #     APA-formatted table, dplyr munging, & ggplot2 formatting
 #
@@ -176,6 +176,8 @@ mean(s$nWT[s$SO=='COGNITIVE SCIENCE'])
 
 # Analysis 1: Simple Descriptives
 
+## Num. Authors
+
 Let's compute some simple comparisons across disciplines such as number of authors, content detail in titles and abstracts and so on. This is the first batch of reported inferential analyses in the paper.
 
 ```{r}
@@ -192,6 +194,12 @@ summary(lm(nAU~comm,data=s[s$SO!='COMMUNICATION THEORY',]))
 
 summary(lm(nAU~SO,data=s))
 summary(lm(log(nAU)~SO,data=s))
+
+```
+
+## Num. Words in Title 
+
+```{r}
 
 ### title ###
 
@@ -216,7 +224,11 @@ summary(lm(nWT~SO,data=s)) # by journal identity
 cbind(s[order(nchar(s$TI),decreasing=F)[1:10],]$TI,
       s[order(nchar(s$TI),decreasing=F)[1:10],]$SO)
 
-### abstract ###
+```
+
+## N. Words in Abstract 
+
+```{r}
 
 aggregate(nWA~comm,data=s,mean)
 summary(lm(nWA~comm,data=s))
@@ -229,6 +241,8 @@ cor.test(s$nWA,s$nWT)
 ```
 
 # Analysis 2: Topic Space
+
+## Build Space, Clusters
 
 Let's build the topic space and use t-SNE to position the articles by reducing the topic distributions into a two-dimensional solution that can then be analyzed using k-means. See earlier in the Appendix writeup for a justification for this multi-step reduction from the thousands of abstracts.
 
@@ -262,6 +276,8 @@ cluster_data$SO = s$SO
 
 ```
 
+## By Discipline
+
 Let's take a look at this space by discipline, then do some stats on whether the multi-step approach separates communication and cognitive science articles.
 
 ```{r}
@@ -285,6 +301,8 @@ summary(lm(y~SO,data=cluster_data))
 table(cluster_data$SO,cluster_data$comm) # triple check check alignment
 
 ```
+
+## Entropy & Cluster
 
 Now let's assess if the k-means clusters are distributed more broadly across the putatively multidisciplinary under consideration (cognitive science) compared to the one that may be a more coherence federation of allied interests (communication).
 
@@ -320,6 +338,8 @@ t.test(comm_entropy,cogs_entropy) # cogs is more varied; higher entropy
 
 ```
 
+## Journal Relations
+
 Let's look at clustering by journal and their pairwise correlations by how they distribute over topics.
 
 ```{r}
@@ -340,6 +360,8 @@ heatmap(journal_dists,margins=c(16,13),cexRow=.75,cexCol=.75)
 
 ```
 
+## Plot of Clusters
+
 Let's plot by k-means cluster, also for guidance in qualitative assessment and in the interactive interface.
 
 ```{r}
@@ -355,6 +377,8 @@ ggplot(cluster_data, aes(x = x, y = y, color = cluster_20)) +
   scale_shape_discrete(name = "Communication Journal")
 
 ```
+
+## Plot by Journal
 
 Not included in the paper but we should also plot by journal. This is mentioned in the Appendix for the interested reader.
 
@@ -376,11 +400,13 @@ Finally, let's create the interactive interface. A perhaps clunky approach with 
 
 # let's get the k-means cluster information to display alongside papers used in mouseover
 wordsdata = list()
+coords = c()
 
 # now let's use these to filter to the more unique summaries...
 for (i in 1:20) {
   # first, let's extract the top LDA topics for this cluster
   tmp = probs[cluster_data$cluster_20==i,]
+  
   # which_topics = order(colSums(tmp),decreasing=T)[1:10]
   word_scores = colSums(tmp %*% lda_model$topics)#[which_topics,])
 
@@ -394,7 +420,49 @@ for (i in 1:20) {
   wordsdata[[i]] = wordsdata[[i]][order(wordsdata[[i]]$score,decreasing=T),]
 }
 
+``` 
+
+## Map Single Words
+
+Let's also build a word map showing the relative positive from "top" to "bottom" for all the words that were among the top 50 in the topic clusters computed above.
+
+```{r}
+
+# get all words!
+indivwords = unique(unlist(lapply(wordsdata,function(x)return(x['word']))))
+indivwords = indivwords[nchar(indivwords)>4] # filter out remaining noise from abstracts
+wordmapping = c()
+ymeans = c()
+for (i in 1:length(indivwords)) {
+  ins = grep(indivwords[i],paste0(s$TI,s$AB))
+  wordmapping = rbind(wordmapping,
+                      data.frame(x=cluster_data[ins,]$x,
+                                 y=cluster_data[ins,]$y,
+                                 word=indivwords[i])
+                      )
+  ymeans = c(ymeans,mean(cluster_data[ins,]$y))
+}
+
+### let's test effect of key terms in bidireciotnal account
+t.test(wordmapping[wordmapping$word=='media',]$y,
+       wordmapping[wordmapping$word=='processing',]$y)
+
+t.test(wordmapping[wordmapping$word=='media',]$y,
+       wordmapping[wordmapping$word=='neural',]$y)
+
+word_coords = wordmapping %>% 
+  group_by(word) %>% 
+  summarise(mean_x = mean(x), mean_y = mean(y), freq_word = length(x))
+plot(range(word_coords$mean_x),range(word_coords$mean_y),
+     col='white',xlab='t-SNE x',ylab='t-SNE y')
+text(word_coords$mean_x,
+     word_coords$mean_y,
+     word_coords$word,cex=log(word_coords$freq_word)/10,
+     col='#000000aa')
+
 ```
+
+## Generate Interface
 
 Let's now export the interface as `index.html' for use on lab website and for reader to consult at https://co-mind.org/cogcomm
 
@@ -418,7 +486,7 @@ write(file='index.html',paste(
   gsub("'","`",s$AU),' - ',s$SO,
   '\',\'',s$DL,'\',\'',cluster_data$cluster_20,'\');\" ',
   #'\');\" titleabstract=\"', paste0(s$TI,' ',s$AB),'\"',
-  'style="font-size:',5*sqrt(s$nAU)+.1,
+  'style="font-size:',7.5*sqrt(s$nAU)+.5,
   'pt;top:',y,'%;left:',x,'%;position:absolute;color:',cols,
   ';cursor:pointer;" defaultcolor="',cols,'">',
   c('&#9679;','&#9632;')[1*s$comm+1],'</div>',sep='',collapse=''),
