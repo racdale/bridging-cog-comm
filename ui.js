@@ -65,6 +65,8 @@ document.body.appendChild(button);
 
 var highlight_color = "yellow";
 document.getElementById('search_button').addEventListener('click', function() {    
+    commTally = 0;
+    cogTally = 0;
     var search = document.getElementById('search').value;
     var divs = document.getElementsByClassName('divdot');
     search_values = search.split('|');
@@ -72,7 +74,12 @@ document.getElementById('search_button').addEventListener('click', function() {
         var haystack = txt[i].ti + ' ' + txt[i].ab;            
         found = false;
         for (var j = 0; j < search_values.length; j++) {            
-            if (haystack.toLowerCase().indexOf(search_values[j]) > -1) {                
+            if (haystack.toLowerCase().indexOf(search_values[j].toLowerCase()) > -1) {                
+                if (divs[i].classList.contains('comTRUE')) {
+                    commTally++;
+                } else {
+                    cogTally++;
+                }
                 found = true;
                 break;
             }
@@ -83,6 +90,20 @@ document.getElementById('search_button').addEventListener('click', function() {
             divs[i].style.backgroundColor = '#ffffff00';
         }
     }
+    var p = document.getElementById('percentages');
+    if (p) {
+        document.body.removeChild(p);
+    }
+    var p = document.createElement('p');
+    p.id = 'percentages';
+    p.style.position = 'fixed';
+    p.style.bottom = '0';
+    p.style.left = '220px';
+    p.style.height = '20px';
+    p.style.fontSize = '11pt';
+    p.style.zIndex = '1';
+    p.innerHTML = (commTally+cogTally) + ' / ' + divs.length + ' (' + commTally + ' in COMM, ' + cogTally + ' in CogSci)';
+    document.body.appendChild(p);
 });
 
 function draw_button(innerhtml,id,bottompx) {
